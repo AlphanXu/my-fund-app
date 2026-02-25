@@ -1,0 +1,942 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b1220" />
+    <title>基金净值估算</title>
+
+    <script>
+      // Tailwind CDN config must come BEFORE loading CDN script
+      window.tailwind = window.tailwind || {};
+      window.tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            boxShadow: {
+              soft: "0 10px 25px rgba(0,0,0,.10)",
+            },
+          },
+        },
+      };
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      /* Better tap feel on mobile */
+      button, input {
+        -webkit-tap-highlight-color: transparent;
+      }
+    </style>
+  </head>
+  <body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+    <div id="app" class="min-h-[100svh]">
+      <div class="mx-auto max-w-md px-4 pb-10 pt-5">
+        <!-- Top bar -->
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <div class="h-9 w-9 rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-900 grid place-items-center shadow-soft">
+              <span class="text-sm font-black">基金</span>
+            </div>
+            <div>
+              <div class="text-base font-semibold leading-tight">净值估算</div>
+              <div class="text-xs text-slate-500 dark:text-slate-400 leading-tight">
+                实时估算 · 每 60 秒自动刷新
+              </div>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <button
+              @click="refreshAll(true)"
+              class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium shadow-sm active:scale-[.98] dark:border-slate-800 dark:bg-slate-900"
+              :disabled="isRefreshing"
+              aria-label="刷新"
+            >
+              <i data-lucide="refresh-cw" class="h-4 w-4"></i>
+              <span class="hidden sm:inline">刷新</span>
+            </button>
+
+            <button
+              @click="toggleTheme"
+              class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium shadow-sm active:scale-[.98] dark:border-slate-800 dark:bg-slate-900"
+              aria-label="切换主题"
+            >
+              <template v-if="isDarkMode">
+                <i data-lucide="sun" class="h-4 w-4"></i>
+                <span class="hidden sm:inline">浅色</span>
+              </template>
+              <template v-else>
+                <i data-lucide="moon" class="h-4 w-4"></i>
+                <span class="hidden sm:inline">深色</span>
+              </template>
+            </button>
+          </div>
+        </div>
+
+        <!-- Add fund -->
+        <div class="mt-4 rounded-2xl border border-slate-200 bg-white p-3 shadow-soft dark:border-slate-800 dark:bg-slate-900">
+          <div class="flex items-center gap-2">
+            <div class="relative flex-1">
+              <i data-lucide="search" class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"></i>
+              <input
+                v-model="codeInput"
+                inputmode="numeric"
+                pattern="[0-9]*"
+                maxlength="6"
+                placeholder="输入 6 位基金代码添加（例如 000001）"
+                class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-sm outline-none ring-0 placeholder:text-slate-400 focus:border-slate-300 dark:border-slate-800 dark:bg-slate-950 dark:focus:border-slate-700"
+                @keydown.enter.prevent="addCode()"
+              />
+            </div>
+            <button
+              @click="addCode()"
+              class="inline-flex shrink-0 items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm active:scale-[.98] disabled:opacity-60 dark:bg-white dark:text-slate-900"
+              :disabled="!canAdd"
+            >
+              <i data-lucide="plus" class="h-4 w-4"></i>
+              添加
+            </button>
+          </div>
+          <div v-if="hint" class="mt-2 text-xs text-slate-500 dark:text-slate-400">
+            {{ hint }}
+          </div>
+        </div>
+
+        <!-- Group tabs -->
+        <div class="mt-3 flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <button
+            v-for="g in orderedGroups"
+            :key="g.id"
+            type="button"
+            @click="currentGroupId = g.id; refreshAll(true); nextTick(refreshIcons)"
+            class="flex-1 rounded-lg py-2 text-xs font-medium transition-colors"
+            :class="currentGroupId === g.id ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'"
+          >
+            {{ g.name }}
+          </button>
+        </div>
+
+        <!-- Status -->
+        <div class="mt-4 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+          <div class="flex items-center gap-2">
+            <span class="inline-flex items-center gap-1.5">
+              <span class="h-1.5 w-1.5 rounded-full" :class="isRefreshing ? 'bg-amber-500' : 'bg-emerald-500'"></span>
+              {{ isRefreshing ? '更新中…' : '已就绪' }}
+            </span>
+            <span v-if="lastUpdatedText">· {{ lastUpdatedText }}</span>
+          </div>
+          <button
+            @click="resetToDefault"
+            class="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 hover:bg-slate-100 active:scale-[.98] dark:hover:bg-slate-900"
+            aria-label="恢复默认基金"
+          >
+            <i data-lucide="rotate-ccw" class="h-3.5 w-3.5"></i>
+            恢复默认
+          </button>
+        </div>
+
+        <!-- List (draggable by handle) -->
+        <div
+          class="mt-2 space-y-2"
+          @dragover.prevent
+          @dragleave="onDragLeaveList"
+        >
+          <template v-for="code in watchlist" :key="code">
+            <!-- 插入位置指示线：放在该卡片上方 -->
+            <div
+              v-show="dragInsertBeforeCode === code"
+              class="h-0.5 rounded-full bg-rose-500 dark:bg-rose-400"
+              style="margin: -2px 0;"
+            ></div>
+            <div
+              class="rounded-xl border border-slate-200 bg-white shadow-soft transition-all duration-150 dark:border-slate-800 dark:bg-slate-900"
+              :class="{
+                'opacity-50 scale-[0.98]': isDraggingCode === code,
+              }"
+              @dragover.prevent="onDragOverFund($event, code)"
+              @dragleave="onDragLeaveFund(code)"
+              @drop.prevent="onDropFund($event, code)"
+            >
+            <div class="flex items-center gap-2 p-2">
+              <div
+                class="shrink-0 cursor-grab touch-manipulation select-none active:cursor-grabbing"
+                draggable="true"
+                aria-label="拖动排序"
+                @dragstart="onDragStartFund($event, code)"
+                @dragend="onDragEndFund"
+                @pointerdown.stop
+                @mousedown.stop
+                @click.stop
+              >
+                <i data-lucide="grip-vertical" class="h-4 w-4 text-slate-400"></i>
+              </div>
+              <div
+                class="min-w-0 flex-1 cursor-pointer"
+                @click="openHoldings(code)"
+              >
+                <div class="flex items-center justify-between gap-2">
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-1.5">
+                      <div class="truncate text-xs font-semibold">
+                        {{ fundName(code) }}
+                      </div>
+                      <span class="shrink-0 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
+                        {{ code }}
+                      </span>
+                    </div>
+                  </div>
+                  <div class="flex shrink-0 items-center gap-3 text-right">
+                    <div>
+                      <div class="text-[9px] text-slate-500 dark:text-slate-400">估算涨跌</div>
+                      <div class="text-xs font-bold tabular-nums" :class="pctClass(code)">
+                        {{ funds[code]?.gszzl != null ? signedPct(funds[code].gszzl) : '--' }}
+                      </div>
+                    </div>
+                    <div>
+                      <div class="text-[9px] text-slate-500 dark:text-slate-400">实际涨跌</div>
+                      <div class="text-xs font-bold tabular-nums" :class="actualPctClass(code)">
+                        {{ actualPctText(code) }}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="shrink-0 rounded-lg p-1.5 text-slate-500 hover:bg-rose-100 hover:text-rose-600 dark:hover:bg-rose-900/30 dark:hover:text-rose-300"
+                aria-label="删除"
+                @click.stop.prevent="removeCode(code)"
+              >
+                <i data-lucide="trash-2" class="h-3.5 w-3.5"></i>
+              </button>
+            </div>
+
+            <div v-if="funds[code]?.error" class="mt-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-200">
+              获取失败：{{ funds[code].error }}
+            </div>
+          </div>
+          </template>
+          <!-- 插入到列表末尾的指示线 -->
+          <div
+            v-show="watchlist.length > 0 && dragInsertBeforeCode === null && isDraggingCode"
+            class="h-0.5 rounded-full bg-rose-500 dark:bg-rose-400"
+            style="margin: -2px 0;"
+          ></div>
+
+          <div v-if="watchlist.length === 0" class="rounded-xl border border-dashed border-slate-300 bg-white p-5 text-center text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+            还没有自选基金，先添加一个 6 位代码吧。
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="mt-6 text-center text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+          数据来源：东方财富基金估值接口（JSONP）<br />
+          仅供参考，不构成投资建议
+        </div>
+      </div>
+
+      <!-- Holdings bottom sheet -->
+      <div
+        v-if="activeCode"
+        class="fixed inset-0 z-40 flex items-end justify-center bg-black/40 backdrop-blur-sm"
+        @click.self="closeHoldings"
+      >
+        <div class="w-full max-w-md rounded-t-3xl bg-white p-4 pb-6 shadow-soft dark:bg-slate-900">
+          <div class="mb-2 flex items-center justify-between">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2">
+                <div class="truncate text-sm font-semibold">
+                  {{ activeFundName }}
+                </div>
+                <span class="shrink-0 rounded-lg border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
+                  {{ activeCode }}
+                </span>
+              </div>
+              <div class="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                前十大重仓（季报披露）
+              </div>
+            </div>
+            <button
+              @click="closeHoldings"
+              class="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-500 shadow-sm active:scale-[.98] dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300"
+              aria-label="关闭"
+            >
+              <i data-lucide="x" class="h-4 w-4"></i>
+            </button>
+          </div>
+
+          <div class="mt-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
+            <template v-if="holdingsMap[activeCode]?.loading">
+              正在加载前十大重仓及分解估值，请稍候…
+            </template>
+            <template v-else-if="holdingsMap[activeCode]?.error">
+              加载失败：{{ holdingsMap[activeCode].error }}
+            </template>
+            <template v-else-if="!holdingsMap[activeCode]?.holdings?.length">
+              暂未获取到前十大重仓数据，具体持仓请以基金公司/官方公告为准。
+            </template>
+            <template v-else>
+              <div class="mb-2 text-[11px] text-slate-500 dark:text-slate-400">
+                以下为最近季报披露的前十大重仓及当日涨幅（仅供参考）。
+              </div>
+              <div class="grid max-h-72 grid-cols-2 gap-x-2 gap-y-1.5 overflow-auto pr-1">
+                <div
+                  v-for="(h, idx) in holdingsMap[activeCode].holdings"
+                  :key="h.stockCode"
+                  class="flex items-center justify-between gap-1.5 rounded-xl bg-white/60 px-2 py-1.5 text-[11px] dark:bg-slate-900/80"
+                >
+                  <div class="min-w-0 flex-1">
+                    <div class="truncate font-medium">
+                      {{ idx + 1 }}. {{ h.stockName }}
+                    </div>
+                    <div class="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">
+                      {{ formatStockCode(h.stockCode, h.exchange) }} · {{ (h.weight * 100).toFixed(2) }}%
+                    </div>
+                  </div>
+                  <div class="shrink-0 text-right">
+                    <div class="text-[10px] text-slate-500 dark:text-slate-400">涨幅</div>
+                    <div
+                      class="mt-0.5 font-semibold tabular-nums"
+                      :class="stockPctDisplay(h.pctChange) != null ? (stockPctDisplay(h.pctChange) >= 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400') : 'text-slate-400 dark:text-slate-500'"
+                    >
+                      {{ stockPctDisplay(h.pctChange) != null ? signedPct(stockPctDisplay(h.pctChange)) : '--' }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="mt-2 text-[10px] text-slate-400 dark:text-slate-500">
+                实际组合还包括前十名之外的资产及现金头寸，本工具按披露持仓和实时行情进行简化估算，数据仅供参考，请以基金公司/官方披露为准。
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <!-- Lucide icons -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+    <script>
+      const { createApp, ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } = Vue;
+
+      const LS_GROUP_PREFIX = "fund_group_";
+      const LS_GROUP_ORDER_KEY = "fund_group_order_v1";
+      const LS_THEME_KEY = "fund_theme_v1";
+      const GROUPS = [
+        { id: "growth", name: "成长风格", defaultCodes: ["020755", "019431", "014088", "022364"] },
+        { id: "value", name: "价值风格", defaultCodes: ["020755", "019431", "014088", "022364"] },
+        { id: "theme", name: "主题赛道", defaultCodes: ["020755", "019431", "014088", "022364"] },
+      ];
+      const DEFAULT_GROUP_CODES = Object.fromEntries(GROUPS.map((g) => [g.id, g.defaultCodes]));
+      const DEFAULT_GROUP_ORDER = GROUPS.map((g) => g.id);
+
+      function safeJsonParse(value, fallback) {
+        try {
+          const parsed = JSON.parse(value);
+          return parsed == null ? fallback : parsed;
+        } catch {
+          return fallback;
+        }
+      }
+
+      function uniqCodes(codes) {
+        const out = [];
+        const seen = new Set();
+        for (const c of codes) {
+          const code = String(c || "").trim();
+          if (!/^\d{6}$/.test(code)) continue;
+          if (seen.has(code)) continue;
+          seen.add(code);
+          out.push(code);
+        }
+        return out;
+      }
+
+      // 备用：前端直接走官方 JSONP 估值接口，在后端不可用时兜底使用
+      const jsonpQueue = {
+        chain: Promise.resolve(),
+        enqueue(task) {
+          this.chain = this.chain.then(task, task);
+          return this.chain;
+        },
+      };
+
+      function fetchFundByJsonp(code, { timeoutMs = 8000 } = {}) {
+        const fundCode = String(code || "").trim();
+        if (!/^\d{6}$/.test(fundCode)) return Promise.reject(new Error("基金代码必须为 6 位数字"));
+
+        return jsonpQueue.enqueue(
+          () =>
+            new Promise((resolve, reject) => {
+              const CALLBACK = "jsonpgz";
+              const previous = window[CALLBACK];
+              let finished = false;
+              let script = null;
+              const timer = setTimeout(() => {
+                finish(new Error("请求超时"));
+              }, timeoutMs);
+
+              function restoreCallback() {
+                try {
+                  if (previous === undefined) {
+                    delete window[CALLBACK];
+                  } else {
+                    window[CALLBACK] = previous;
+                  }
+                } catch {
+                  window[CALLBACK] = previous;
+                }
+              }
+
+              function cleanupDom() {
+                if (script && script.parentNode) script.parentNode.removeChild(script);
+                script = null;
+              }
+
+              function finish(err, data) {
+                if (finished) return;
+                finished = true;
+                clearTimeout(timer);
+                cleanupDom();
+                restoreCallback();
+                if (err) reject(err);
+                else resolve(data);
+              }
+
+              window[CALLBACK] = (data) => {
+                if (!data || typeof data !== "object") {
+                  finish(new Error("回调数据异常"));
+                  return;
+                }
+                finish(null, data);
+              };
+
+              script = document.createElement("script");
+              script.async = true;
+              script.referrerPolicy = "no-referrer";
+              script.onerror = () => finish(new Error("脚本加载失败"));
+              script.src = `https://fundgz.1234567.com.cn/js/${fundCode}.js?rt=${Date.now()}`;
+              document.head.appendChild(script);
+            })
+        );
+      }
+
+      function normalizeFundPayload(payload, fallbackCode) {
+        const code = String(payload.fundcode || fallbackCode || "").trim();
+        const name = String(payload.name || "").trim() || "未知基金";
+        const gsz = payload.gsz != null ? String(payload.gsz) : null;
+        const gszzlRaw = payload.gszzl != null ? String(payload.gszzl) : null;
+        const gszzl = gszzlRaw != null && gszzlRaw !== "" ? Number(gszzlRaw) : null;
+        const gztime = payload.gztime != null ? String(payload.gztime) : null;
+
+        return { code, name, gsz, gszzl, gztime };
+      }
+
+      function formatNow() {
+        const d = new Date();
+        const pad = (n) => String(n).padStart(2, "0");
+        return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      }
+
+      createApp({
+        setup() {
+          const theme = ref(localStorage.getItem(LS_THEME_KEY) || "system");
+          const codeInput = ref("");
+          const hint = ref("");
+          const isRefreshing = ref(false);
+          const lastUpdatedText = ref("");
+
+          const currentGroupId = ref("growth");
+          const groupOrder = ref(
+            safeJsonParse(localStorage.getItem(LS_GROUP_ORDER_KEY), null) || [...DEFAULT_GROUP_ORDER]
+          );
+          const orderedGroups = computed(() => {
+            const order = groupOrder.value || DEFAULT_GROUP_ORDER;
+            return order.map((id) => GROUPS.find((g) => g.id === id)).filter(Boolean);
+          });
+          const groupLists = reactive({ growth: [], value: [], theme: [] });
+          const watchlist = computed(() => groupLists[currentGroupId.value] || []);
+          const dragCode = ref(null);
+          const dragOverCode = ref(null);
+          const dragInsertBeforeCode = ref(null);
+          const isDraggingCode = ref(null);
+          const lastDropAt = ref(0);
+          const activeCode = ref(null);
+          const funds = reactive({}); // code -> { name, gsz, gszzl, gztime, error?, navByLegs? }
+          const holdingsMap = reactive({}); // code -> { holdings, loading, error }
+
+          const canAdd = computed(() => /^\d{6}$/.test(codeInput.value.trim()));
+          const isDarkMode = ref(false);
+
+          function applyTheme() {
+            const html = document.documentElement;
+            const stored = theme.value;
+            const sysDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+            const finalTheme = stored === "system" ? (sysDark ? "dark" : "light") : stored;
+            html.classList.toggle("dark", finalTheme === "dark");
+            isDarkMode.value = finalTheme === "dark";
+          }
+
+          function toggleTheme() {
+            theme.value = isDarkMode.value ? "light" : "dark";
+            localStorage.setItem(LS_THEME_KEY, theme.value);
+            applyTheme();
+            nextTick(refreshIcons);
+          }
+
+          function loadGroups() {
+            const order = safeJsonParse(localStorage.getItem(LS_GROUP_ORDER_KEY), null);
+            if (Array.isArray(order) && order.length) groupOrder.value = order;
+            for (const g of GROUPS) {
+              const saved = safeJsonParse(localStorage.getItem(LS_GROUP_PREFIX + g.id + "_v1"), null);
+              const list = Array.isArray(saved) ? uniqCodes(saved) : uniqCodes([...g.defaultCodes]);
+              groupLists[g.id] = list.length ? list : [...g.defaultCodes];
+            }
+          }
+
+          function persistGroupOrder() {
+            localStorage.setItem(LS_GROUP_ORDER_KEY, JSON.stringify(groupOrder.value));
+          }
+
+          function persistCurrentGroup() {
+            const list = groupLists[currentGroupId.value];
+            if (list) {
+              localStorage.setItem(LS_GROUP_PREFIX + currentGroupId.value + "_v1", JSON.stringify(list));
+            }
+          }
+
+          function resetToDefault() {
+            const def = DEFAULT_GROUP_CODES[currentGroupId.value] || [];
+            groupLists[currentGroupId.value] = uniqCodes([...def]);
+            persistCurrentGroup();
+            refreshAll(true);
+            nextTick(refreshIcons);
+          }
+
+          function addCode() {
+            hint.value = "";
+            const code = codeInput.value.trim();
+            if (!/^\d{6}$/.test(code)) {
+              hint.value = "请输入 6 位数字代码。";
+              return;
+            }
+            if (watchlist.value.includes(code)) {
+              hint.value = "该基金已在列表中。";
+              codeInput.value = "";
+              return;
+            }
+            watchlist.value.unshift(code);
+            persistCurrentGroup();
+            codeInput.value = "";
+            refreshOne(code, true);
+            nextTick(refreshIcons);
+          }
+
+          function removeCode(code) {
+            const list = groupLists[currentGroupId.value];
+            if (!list) return;
+            const idx = list.indexOf(code);
+            if (idx !== -1) list.splice(idx, 1);
+            persistCurrentGroup();
+            delete funds[code];
+            nextTick(refreshIcons);
+          }
+
+          function onDragStartFund(e, code) {
+            e.stopPropagation();
+            dragCode.value = code;
+            isDraggingCode.value = code;
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("text/plain", code);
+            e.dataTransfer.setData("application/x-fund-code", code);
+            try {
+              const card = e.target.closest(".rounded-xl.border");
+              if (card) {
+                const ghost = card.cloneNode(true);
+                ghost.style.width = card.offsetWidth + "px";
+                ghost.style.opacity = "0.9";
+                ghost.style.background = "var(--tw-bg-opacity, 1) rgb(255 255 255)";
+                ghost.classList.add("shadow-lg");
+                document.body.appendChild(ghost);
+                ghost.style.position = "absolute";
+                ghost.style.top = "-9999px";
+                e.dataTransfer.setDragImage(ghost, 0, 0);
+                setTimeout(() => document.body.removeChild(ghost), 0);
+              }
+            } catch (_) {}
+          }
+          function onDragEndFund() {
+            isDraggingCode.value = null;
+            dragCode.value = null;
+            dragOverCode.value = null;
+            dragInsertBeforeCode.value = null;
+          }
+          function onDragOverFund(e, code) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            dragOverCode.value = code;
+            const list = watchlist.value;
+            const idx = list.indexOf(code);
+            if (idx === -1) return;
+            const card = e.currentTarget;
+            const rect = card.getBoundingClientRect();
+            const mid = rect.top + rect.height / 2;
+            if (e.clientY < mid) {
+              dragInsertBeforeCode.value = code;
+            } else {
+              dragInsertBeforeCode.value = idx + 1 < list.length ? list[idx + 1] : null;
+            }
+          }
+          function onDragLeaveFund(code) {
+            if (dragOverCode.value === code) {
+              dragOverCode.value = null;
+              dragInsertBeforeCode.value = null;
+            }
+          }
+          function onDragLeaveList(e) {
+            if (!e.relatedTarget || !e.currentTarget.contains(e.relatedTarget)) {
+              dragOverCode.value = null;
+              dragInsertBeforeCode.value = null;
+            }
+          }
+          function onDropFund(e, targetCode) {
+            e.preventDefault();
+            e.stopPropagation();
+            const code = dragCode.value;
+            const insertBefore = dragInsertBeforeCode.value;
+            dragOverCode.value = null;
+            dragInsertBeforeCode.value = null;
+            if (!code) return;
+            const list = groupLists[currentGroupId.value];
+            if (!list) return;
+            const fromIdx = list.indexOf(code);
+            if (fromIdx === -1) return;
+            const toIdx = insertBefore != null ? list.indexOf(insertBefore) : list.length;
+            if (toIdx === -1 && insertBefore != null) return;
+            const insertIdx = fromIdx < toIdx ? toIdx - 1 : toIdx;
+            list.splice(fromIdx, 1);
+            list.splice(insertIdx, 0, code);
+            persistCurrentGroup();
+            dragCode.value = null;
+            isDraggingCode.value = null;
+            lastDropAt.value = Date.now();
+            nextTick(refreshIcons);
+          }
+
+          function openHoldings(code) {
+            if (Date.now() - lastDropAt.value < 300) return;
+            activeCode.value = code;
+            if (!holdingsMap[code]) {
+              holdingsMap[code] = { loading: false, error: null, holdings: [] };
+            }
+            const entry = holdingsMap[code];
+            if (!entry.holdings.length && !entry.loading) {
+              entry.loading = true;
+              entry.error = null;
+              fetch(`/api/fund/${code}/estimate`)
+                .then((res) => {
+                  if (!res.ok) throw new Error("估值接口请求失败");
+                  return res.json();
+                })
+                .then((data) => {
+                  const legs = Array.isArray(data.legs) ? data.legs : [];
+                  if (legs.length > 0) {
+                    entry.holdings = legs;
+                    entry.loading = false;
+                    nextTick(refreshIcons);
+                    return;
+                  }
+                  return fetch(`/api/fund/${code}/holdings`)
+                    .then((r) => (r.ok ? r.json() : Promise.reject(new Error("持仓请求失败"))))
+                    .then((holdData) => {
+                      entry.holdings = Array.isArray(holdData.holdings) ? holdData.holdings : [];
+                    });
+                })
+                .catch((e) => {
+                  entry.error = e && e.message ? e.message : "加载失败";
+                  return fetch(`/api/fund/${code}/holdings`)
+                    .then((r) => (r.ok ? r.json() : Promise.reject()))
+                    .then((holdData) => {
+                      if (Array.isArray(holdData.holdings) && holdData.holdings.length > 0) {
+                        entry.holdings = holdData.holdings;
+                        entry.error = null;
+                      }
+                    })
+                    .catch(() => {});
+                })
+                .finally(() => {
+                  entry.loading = false;
+                  nextTick(refreshIcons);
+                });
+            } else {
+              nextTick(refreshIcons);
+            }
+          }
+
+          function closeHoldings() {
+            activeCode.value = null;
+            nextTick(refreshIcons);
+          }
+
+          function fundName(code) {
+            return (funds[code] && funds[code].name) || "加载中…";
+          }
+
+          function pctClass(code) {
+            const v = funds[code]?.gszzl;
+            if (v == null || Number.isNaN(v)) return "text-slate-400 dark:text-slate-500";
+            return v >= 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400";
+          }
+
+          function actualPctValue(code) {
+            const prev = funds[code]?.navPrev;
+            const dis = funds[code]?.navDisclosed;
+            if (prev == null || dis == null || prev <= 0) return null;
+            return ((dis - prev) / prev) * 100;
+          }
+
+          function actualPctText(code) {
+            const v = actualPctValue(code);
+            return v != null && Number.isFinite(v) ? signedPct(v) : "--";
+          }
+
+          function actualPctClass(code) {
+            const v = actualPctValue(code);
+            if (v == null || !Number.isFinite(v)) return "text-slate-400 dark:text-slate-500";
+            return v >= 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400";
+          }
+
+          function stockPctDisplay(pct) {
+            if (pct == null || !Number.isFinite(pct)) return null;
+            return pct;
+          }
+
+          function signedPct(v) {
+            const n = Number(v);
+            if (!Number.isFinite(n)) return "--";
+            const sign = n > 0 ? "+" : "";
+            return `${sign}${n.toFixed(2)}%`;
+          }
+
+          function formatNav(v) {
+            if (v == null) return "--";
+            const n = Number(v);
+            return Number.isFinite(n) ? n.toFixed(4) : "--";
+          }
+
+          /** 个股代码展示：按交易所显示，上交所 SH、深交所 SZ、港交所 HK */
+          function formatStockCode(code, exchange) {
+            if (code == null || code === "") return "";
+            const c = String(code).replace(/[^0-9]/g, "");
+            if (!c) return String(code);
+            if (exchange === "SH" || exchange === "SZ" || exchange === "HK") {
+              const codePart = exchange === "HK" ? c.padStart(5, "0") : c.slice(0, 6);
+              return codePart + "." + exchange;
+            }
+            return String(code);
+          }
+
+          async function refreshOne(code, markUpdating = false) {
+            const setError = (msg) => {
+              const base = funds[code] || {
+                name: "未知基金",
+                gsz: null,
+                gszzl: null,
+                gztime: null,
+                navByLegs: null,
+                navDisclosed: null,
+                navDisclosedDate: null,
+                navPrev: null,
+              };
+              funds[code] = { ...base, error: msg };
+            };
+            if (markUpdating) {
+              funds[code] = funds[code] || {
+                name: "加载中…",
+                gsz: null,
+                gszzl: null,
+                gztime: null,
+                error: null,
+                navByLegs: null,
+                navDisclosed: null,
+                navDisclosedDate: null,
+                navPrev: null,
+              };
+              funds[code].error = null;
+            }
+            try {
+              const res = await fetch(`/api/fund/${code}/estimate`);
+              if (!res.ok) {
+                let msg = "估值接口请求失败";
+                try {
+                  const body = await res.json();
+                  if (body && body.error) msg = body.error;
+                } catch (_) {}
+                setError(msg);
+                return;
+              }
+              const data = await res.json();
+              const normalized = {
+                code: data.fundCode || code,
+                name: data.name || "未知基金",
+                gsz:
+                  data.navEstByLegs != null
+                    ? String(data.navEstByLegs.toFixed(4))
+                    : data.navEstOfficial != null
+                    ? String(data.navEstOfficial.toFixed(4))
+                    : null,
+                gszzl:
+                  data.fundPctChangeEst != null
+                    ? Number(data.fundPctChangeEst)
+                    : data.pctChangeOfficial != null
+                    ? Number(data.pctChangeOfficial)
+                    : null,
+                gztime: data.updatedAt || data.gztime || null,
+                navByLegs: data.navEstByLegs != null ? Number(data.navEstByLegs) : null,
+                navDisclosed: data.navDisclosed != null ? Number(data.navDisclosed) : null,
+                navDisclosedDate: data.navDisclosedDate || null,
+                navPrev: data.navPrev != null ? Number(data.navPrev) : null,
+              };
+              funds[code] = { ...normalized, error: null };
+            } catch (e) {
+              const isNetworkError =
+                e && (e.name === "TypeError" || /Failed to fetch/i.test(e.message || ""));
+              if (isNetworkError) {
+                try {
+                  const payload = await fetchFundByJsonp(code);
+                  const normalized = normalizeFundPayload(payload, code);
+                  funds[code] = { ...normalized, navByLegs: null, error: null };
+                  return;
+                } catch (_) {}
+              }
+              setError(e && e.message ? e.message : "未知错误");
+            }
+          }
+
+          async function refreshAll(force = false) {
+            if (isRefreshing.value && !force) return;
+            isRefreshing.value = true;
+            hint.value = "";
+            try {
+              for (const code of watchlist.value) {
+                try {
+                  await refreshOne(code, true);
+                } catch (e) {
+                  const base = funds[code] || { name: "未知基金", gsz: null, gszzl: null, gztime: null, navByLegs: null };
+                  funds[code] = { ...base, error: (e && e.message) || "刷新失败" };
+                }
+              }
+              lastUpdatedText.value = `最近更新：${formatNow()}`;
+            } finally {
+              isRefreshing.value = false;
+              nextTick(refreshIcons);
+            }
+          }
+
+          let pollTimer = null;
+          function startPolling() {
+            if (pollTimer) clearInterval(pollTimer);
+            pollTimer = setInterval(() => refreshAll(false), 60 * 1000);
+          }
+
+          function stopPolling() {
+            if (pollTimer) clearInterval(pollTimer);
+            pollTimer = null;
+          }
+
+          function refreshIcons() {
+            if (!window.lucide || typeof window.lucide.createIcons !== "function") return;
+            try {
+              window.lucide.createIcons();
+            } catch {
+              // ignore icon render issues
+            }
+          }
+
+          onMounted(() => {
+            applyTheme();
+            if (theme.value === "system") {
+              theme.value = document.documentElement.classList.contains("dark") ? "dark" : "light";
+            }
+            loadGroups();
+            refreshAll(true);
+            startPolling();
+            refreshIcons();
+
+            // Keep system theme synced when theme=system
+            if (window.matchMedia) {
+              const mq = window.matchMedia("(prefers-color-scheme: dark)");
+              const handler = () => {
+                if (theme.value === "system") applyTheme();
+              };
+              if (mq.addEventListener) mq.addEventListener("change", handler);
+              else mq.addListener(handler);
+            }
+          });
+
+          onBeforeUnmount(() => {
+            stopPolling();
+          });
+
+          watch(
+            () => watchlist.value.slice(),
+            () => {
+              persistCurrentGroup();
+            }
+          );
+
+          return {
+            theme,
+            codeInput,
+            hint,
+            canAdd,
+            isRefreshing,
+            lastUpdatedText,
+            GROUPS,
+            orderedGroups,
+            currentGroupId,
+            watchlist,
+            isDarkMode,
+            onDragStartFund,
+            onDragOverFund,
+            onDragLeaveFund,
+            onDragLeaveList,
+            onDragEndFund,
+            onDropFund,
+            isDraggingCode,
+            dragInsertBeforeCode,
+            funds,
+            activeCode,
+            holdingsMap,
+            addCode,
+            removeCode,
+            refreshAll,
+            resetToDefault,
+            toggleTheme,
+            fundName,
+            pctClass,
+            actualPctText,
+            actualPctClass,
+            signedPct,
+            stockPctDisplay,
+            formatNav,
+            formatStockCode,
+            openHoldings,
+            closeHoldings,
+            activeFundName: computed(() => {
+              if (!activeCode.value) return "";
+              return fundName(activeCode.value);
+            }),
+          };
+        },
+      }).mount("#app");
+    </script>
+  </body>
+</html>
+
