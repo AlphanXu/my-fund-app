@@ -747,13 +747,13 @@
             return Number.isFinite(n) ? n.toFixed(4) : "--";
           }
 
-          /** 个股代码展示：按交易所显示，上交所 SH、深交所 SZ、港交所 HK */
+          /** 个股代码展示：按交易所显示，上交所 SH、深交所 SZ、港交所 HK（港股 5 位如 09926.HK） */
           function formatStockCode(code, exchange) {
             if (code == null || code === "") return "";
             const c = String(code).replace(/[^0-9]/g, "");
             if (!c) return String(code);
             if (exchange === "SH" || exchange === "SZ" || exchange === "HK") {
-              const codePart = exchange === "HK" ? c.padStart(5, "0") : c.slice(0, 6);
+              const codePart = exchange === "HK" ? (c.length > 5 ? c.slice(-5) : c).padStart(5, "0") : c.slice(0, 6);
               return codePart + "." + exchange;
             }
             return String(code);

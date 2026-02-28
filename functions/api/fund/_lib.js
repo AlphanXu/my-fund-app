@@ -117,7 +117,9 @@ function stockCodeToSecId(stockCode) {
   if (!code) return null;
   if (code.startsWith("6") && code.length >= 6) return `1.${code}`;
   if ((code.startsWith("0") || code.startsWith("2") || code.startsWith("3")) && code.length >= 6) return `0.${code}`;
+  // 港股：5 位或 4 位直接用；6 位（如 009926）取后 5 位
   if (code.length === 5 || code.length === 4) return `116.${code.padStart(5, "0")}`;
+  if (code.length === 6 && code.startsWith("0")) return `116.${code.slice(-5)}`;
   return null;
 }
 
@@ -127,6 +129,7 @@ function stockCodeToSinaList(stockCode) {
   if (code.startsWith("6") && code.length >= 6) return `sh${code}`;
   if ((code.startsWith("0") || code.startsWith("2") || code.startsWith("3")) && code.length >= 6) return `sz${code}`;
   if (code.length === 5 || code.length === 4) return `hk${code.padStart(5, "0")}`;
+  if (code.length === 6 && code.startsWith("0")) return `hk${code.slice(-5)}`;
   return null;
 }
 
@@ -314,7 +317,8 @@ export async function fetchTop10Holdings(fundCode) {
         }
       }
 
-      const finalCode = stockCode.length === 5 ? stockCode.padStart(6, "0") : stockCode;
+      const finalCode =
+        exchange === "HK" ? digits.slice(-5).padStart(5, "0") : stockCode.length === 5 ? stockCode.padStart(6, "0") : stockCode;
       holdings.push({
         stockCode: finalCode,
         stockName,

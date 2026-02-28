@@ -128,6 +128,7 @@ function stockCodeToSecId(stockCode) {
   if ((code.startsWith("0") || code.startsWith("2") || code.startsWith("3")) && code.length >= 6)
     return `0.${code}`;
   if (code.length === 5 || code.length === 4) return `116.${code.padStart(5, "0")}`;
+  if (code.length === 6 && code.startsWith("0")) return `116.${code.slice(-5)}`;
   return null;
 }
 
@@ -139,6 +140,7 @@ function stockCodeToSinaList(stockCode) {
   if ((code.startsWith("0") || code.startsWith("2") || code.startsWith("3")) && code.length >= 6)
     return `sz${code}`;
   if (code.length === 5 || code.length === 4) return `hk${code.padStart(5, "0")}`;
+  if (code.length === 6 && code.startsWith("0")) return `hk${code.slice(-5)}`;
   return null;
 }
 
@@ -399,7 +401,11 @@ async function fetchTop10Holdings(fundCode) {
       }
 
       const finalCode =
-        codeText.length === 5 || codeText.length >= 6 ? codeText : codeText.padStart(6, "0");
+        exchange === "HK"
+          ? digits.slice(-5).padStart(5, "0")
+          : codeText.length === 5 || codeText.length >= 6
+            ? codeText
+            : codeText.padStart(6, "0");
       holdings.push({
         stockCode: finalCode,
         stockName: stockName || "—",
