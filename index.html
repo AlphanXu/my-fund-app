@@ -772,16 +772,43 @@
             }
             try {
               const res = await fetch(`/api/fund/${code}/estimate`);
+              const contentType = (res.headers.get("content-type") || "").toLowerCase();
               if (!res.ok) {
                 let msg = "估值接口请求失败";
-                try {
-                  const body = await res.json();
-                  if (body && body.error) msg = body.error;
-                } catch (_) {}
+                if (contentType.includes("application/json")) {
+                  try {
+                    const body = await res.json();
+                    if (body && body.error) msg = body.error;
+                  } catch (_) {}
+                }
                 setError(msg);
                 return;
               }
-              const data = await res.json();
+              if (contentType.includes("text/html")) {
+                try {
+                  const payload = await fetchFundByJsonp(code);
+                  const normalized = normalizeFundPayload(payload, code);
+                  funds[code] = { ...normalized, navByLegs: null, error: null };
+                  return;
+                } catch (_) {
+                  setError("后端未部署，请部署 server 或检查网络");
+                }
+                return;
+              }
+              let data;
+              try {
+                data = await res.json();
+              } catch (parseErr) {
+                try {
+                  const payload = await fetchFundByJsonp(code);
+                  const normalized = normalizeFundPayload(payload, code);
+                  funds[code] = { ...normalized, navByLegs: null, error: null };
+                  return;
+                } catch (_) {
+                  setError("接口返回异常，请确认后端已部署");
+                }
+                return;
+              }
               const normalized = {
                 code: data.fundCode || code,
                 name: data.name || "未知基金",
@@ -805,9 +832,11 @@
               };
               funds[code] = { ...normalized, error: null };
             } catch (e) {
-              const isNetworkError =
-                e && (e.name === "TypeError" || /Failed to fetch/i.test(e.message || ""));
-              if (isNetworkError) {
+              const msg = e && e.message ? e.message : "";
+              const needJsonp =
+                e && (e.name === "TypeError" || /Failed to fetch/i.test(msg)) ||
+                /not valid JSON|<!doctype|Unexpected token '<'/i.test(msg);
+              if (needJsonp) {
                 try {
                   const payload = await fetchFundByJsonp(code);
                   const normalized = normalizeFundPayload(payload, code);
@@ -815,7 +844,7 @@
                   return;
                 } catch (_) {}
               }
-              setError(e && e.message ? e.message : "未知错误");
+              setError(msg || "未知错误");
             }
           }
 
