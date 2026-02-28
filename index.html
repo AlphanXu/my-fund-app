@@ -639,9 +639,16 @@
             if (!entry.holdings.length && !entry.loading) {
               entry.loading = true;
               entry.error = null;
+              function holdingsFriendlyError(e) {
+                const msg = e && e.message ? e.message : "";
+                if (/STATIC_DEPLOY|not valid JSON|<!doctype|Unexpected token '<'/i.test(msg)) return "当前为静态部署，前十大重仓需后端接口支持";
+                return msg || "加载失败";
+              }
               fetch(`/api/fund/${code}/estimate`)
                 .then((res) => {
                   if (!res.ok) throw new Error("估值接口请求失败");
+                  const ct = (res.headers.get("content-type") || "").toLowerCase();
+                  if (ct.includes("text/html")) throw new Error("STATIC_DEPLOY");
                   return res.json();
                 })
                 .then((data) => {
@@ -653,15 +660,25 @@
                     return;
                   }
                   return fetch(`/api/fund/${code}/holdings`)
-                    .then((r) => (r.ok ? r.json() : Promise.reject(new Error("持仓请求失败"))))
+                    .then((r) => {
+                      if (!r.ok) return Promise.reject(new Error("持仓请求失败"));
+                      const ct = (r.headers.get("content-type") || "").toLowerCase();
+                      if (ct.includes("text/html")) return Promise.reject(new Error("STATIC_DEPLOY"));
+                      return r.json();
+                    })
                     .then((holdData) => {
                       entry.holdings = Array.isArray(holdData.holdings) ? holdData.holdings : [];
                     });
                 })
                 .catch((e) => {
-                  entry.error = e && e.message ? e.message : "加载失败";
+                  entry.error = holdingsFriendlyError(e);
                   return fetch(`/api/fund/${code}/holdings`)
-                    .then((r) => (r.ok ? r.json() : Promise.reject()))
+                    .then((r) => {
+                      if (!r.ok) return Promise.reject();
+                      const ct = (r.headers.get("content-type") || "").toLowerCase();
+                      if (ct.includes("text/html")) return Promise.reject();
+                      return r.json();
+                    })
                     .then((holdData) => {
                       if (Array.isArray(holdData.holdings) && holdData.holdings.length > 0) {
                         entry.holdings = holdData.holdings;
